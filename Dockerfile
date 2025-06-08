@@ -1,3 +1,3 @@
-FROM scratch
+FROM busybox
 COPY iamyouare /
 ENTRYPOINT ["/iamyouare"]

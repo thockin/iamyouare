@@ -28,6 +28,8 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
+
+	"github.com/thockin/iamyouare/pid1"
 )
 
 var (
@@ -45,6 +47,17 @@ func init() {
 }
 
 func main() {
+	// In case we come up as pid 1, act as init.
+	if os.Getpid() == 1 {
+		fmt.Fprintf(os.Stderr, "INFO: detected pid 1, running init handler\n")
+		code, err := pid1.ReRun()
+		if err == nil {
+			os.Exit(code)
+		}
+		fmt.Fprintf(os.Stderr, "FATAL: unhandled pid1 error: %v\n", err)
+		os.Exit(127)
+	}
+
 	flag.Parse()
 
 	if !doHTTP && !doTCP && !doUDP {
@@ -65,7 +78,7 @@ func main() {
 			log.Fatalf("Listen(): %s", err)
 		}
 		go func() {
-			log.Printf("serving TCP on port %d\n", port)
+			log.Printf("serving TCP on port %d", port)
 			for {
 				conn, err := listener.Accept()
 				if err != nil {
@@ -88,7 +101,7 @@ func main() {
 			log.Fatalf("ListenUDP(): %s", err)
 		}
 		go func() {
-			log.Printf("serving UDP on port %d\n", port)
+			log.Printf("serving UDP on port %d", port)
 			var buffer [16]byte
 			for {
 				_, cliAddr, err := sock.ReadFrom(buffer[0:])
@@ -109,16 +122,28 @@ func main() {
 			fmt.Fprintf(w, "%s", makeMessage(hostname, r.RemoteAddr))
 		})
 		go func() {
-			log.Printf("serving HTTP on port %d\n", port)
+			log.Printf("serving HTTP on port %d", port)
 			log.Fatal(http.ListenAndServe(fmt.Sprintf(":%d", port), nil))
 		}()
 	}
+
 	signals := make(chan os.Signal, 1)
-	signal.Notify(signals, syscall.SIGTERM)
-	sig := <-signals
-	log.Printf("shutting down after receiving signal: %s\n", sig)
-	log.Printf("awaiting pod deletion.\n")
-	time.Sleep(60 * time.Second)
+	signal.Notify(signals, syscall.SIGTERM, syscall.SIGINT)
+	for {
+		sig := <-signals
+		log.Printf("received signal: %s", sig)
+		switch sig {
+		case syscall.SIGTERM:
+			log.Printf("waiting 60s")
+			go func() {
+				time.Sleep(60 * time.Second)
+				os.Exit(0)
+			}()
+		case syscall.SIGINT:
+			log.Printf("exiting immediately")
+			os.Exit(0)
+		}
+	}
 }
 
 func makeMessage(hostname, client string) string {
